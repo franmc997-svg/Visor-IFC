@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Visor IFC · Seguimiento en Sitio</title>
+<style>
+  :root{
+    --bg:#15181a;
+    --panel:#1f2427;
+    --panel2:#262c30;
+    --line:#333a3e;
+    --text:#e9e7e2;
+    --muted:#9aa3a8;
+    --amber:#f2a63a;
+    --amber-dim:#5c4520;
+    --green:#4caf7d;
+    --green-dim:#22392e;
+    --red:#e0574f;
+    --red-dim:#3a2422;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%; margin:0; overscroll-behavior:none;}
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--sans);
+    display:flex; flex-direction:column; height:100dvh; overflow:hidden;
+    padding-top: env(safe-area-inset-top);
+  }
+  #topbar{
+    display:flex; align-items:center; gap:8px; padding:10px 10px;
+    background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap;
+    z-index:20;
+  }
+  .brand{font-weight:700; font-size:14px; letter-spacing:.02em; color:var(--amber); white-space:nowrap;}
+  .modelname{font-size:11px; color:var(--muted); font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px;}
+  button, .btn{
+    appearance:none; border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    padding:9px 12px; border-radius:9px; font-size:13px; font-weight:600; font-family:var(--sans);
+    min-height:40px; display:flex; align-items:center; gap:6px; white-space:nowrap; cursor:pointer;
+  }
+  button:active{ transform: scale(0.97); }
+  button.primary{ background:var(--amber); color:#1a1a1a; border-color:var(--amber); }
+  button.active{ background:var(--amber-dim); border-color:var(--amber); color:var(--amber); }
+  button:disabled{ opacity:.4; }
+  #fileInput{ position:fixed; top:-100px; left:-100px; width:1px; height:1px; opacity:0; }
+  #errBanner{
+    position:absolute; left:8px; right:8px; top:8px; z-index:80; display:none;
+    background:#3a2422; border:1px solid var(--red); color:#ffd9d6; border-radius:10px;
+    padding:10px 12px; font-size:11.5px; font-family:var(--mono); line-height:1.4; max-height:40vh; overflow:auto;
+  }
+  #errBanner .hdr{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-family:var(--sans); font-weight:700; font-size:12.5px; }
+  #errBanner button{ min-height:28px; padding:4px 10px; font-size:11px; }
+  .spacer{flex:1;}
+  #viewToggle{ display:flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  #viewToggle button{ border:none; border-radius:0; min-height:40px; }
+  #viewToggle button.active{ background:var(--amber); color:#1a1a1a; }
+
+  #main{ position:relative; flex:1; min-height:0; }
+  #canvasWrap{ position:absolute; inset:0; }
+  canvas{ display:block; width:100%; height:100%; touch-action:none; }
+
+  #loading{
+    position:absolute; inset:0; background:rgba(21,24,26,.94); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; z-index:50; text-align:center; padding:20px;
+  }
+  #loading.hidden{ display:none; }
+  .spinner{ width:36px; height:36px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--amber); animation:spin 1s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg);} }
+  #loadingText{ font-size:13px; color:var(--muted); max-width:280px; }
+  #progressBar{ width:220px; height:6px; background:var(--panel2); border-radius:4px; overflow:hidden; }
+  #progressFill{ height:100%; width:0%; background:var(--amber); transition:width .15s; }
+
+  #emptyState{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:16px; padding:30px; text-align:center; color:var(--muted);
+  }
+  #emptyState .big{ font-size:15px; color:var(--text); font-weight:600; max-width:300px; }
+  #emptyState .small{ font-size:12.5px; max-width:280px; line-height:1.5; }
+
+  #selectBox{
+    position:absolute; border:1.5px solid var(--amber); background:rgba(242,166,58,.15);
+    pointer-events:none; display:none; z-index:15;
+  }
+
+  #hint{
+    position:absolute; left:10px; bottom:10px; font-size:11px; color:var(--muted);
+    background:rgba(31,36,39,.85); padding:6px 10px; border-radius:8px; z-index:10; max-width:220px; line-height:1.4;
+  }
+
+  #storeySliderWrap{
+    position:absolute; right:10px; top:10px; bottom:10px; display:none; flex-direction:column;
+    align-items:center; z-index:12; background:rgba(31,36,39,.85); border-radius:12px; padding:10px 6px;
+  }
+  #storeySliderWrap.show{ display:flex; }
+  #storeySliderWrap label{ font-size:10px; color:var(--muted); margin-bottom:6px; writing-mode:vertical-rl; }
+  #storeySlider{ flex:1; writing-mode:vertical-lr; direction:rtl; width:28px; }
+  #storeyReadout{ font-size:10px; color:var(--amber); font-family:var(--mono); margin-top:6px; }
+
+  #countBadge{
+    position:absolute; left:10px; top:10px; z-index:10; background:rgba(31,36,39,.85);
+    padding:6px 10px; border-radius:8px; font-size:11.5px; color:var(--muted); font-family:var(--mono);
+  }
+  #countBadge b{ color:var(--amber); }
+
+  /* Bottom panel */
+  #panel{
+    position:relative; background:var(--panel); border-top:1px solid var(--line);
+    max-height:0; overflow:hidden; transition:max-height .22s ease; z-index:25;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #panel.open{ max-height:62vh; overflow-y:auto; }
+  #panelHandle{
+    display:flex; align-items:center; justify-content:space-between; padding:10px 14px;
+    border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel);
+  }
+  #panelHandle .title{ font-size:13px; font-weight:700; }
+  #panelHandle .count{ font-size:12px; color:var(--muted); font-family:var(--mono); }
+  #panelBody{ padding:12px 14px 20px; display:flex; flex-direction:column; gap:14px; }
+
+  .elemCard{
+    background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+    font-size:12px;
+  }
+  .elemCard .name{ font-weight:700; font-size:13px; margin-bottom:2px; }
+  .elemCard .meta{ color:var(--muted); font-family:var(--mono); font-size:10.5px; }
+  .elemCard .ref{ margin-top:6px; font-size:10.5px; color:var(--muted); }
+  .elemCard .ref b{ color:var(--text); }
+
+  .rowLabel{ font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px; }
+  .statusRow{ display:flex; gap:8px; }
+  .statusRow button{ flex:1; justify-content:center; }
+  .statusRow button.si.active{ background:var(--green-dim); border-color:var(--green); color:var(--green); }
+  .statusRow button.no.active{ background:var(--red-dim); border-color:var(--red); color:var(--red); }
+  .statusRow button.sr.active{ background:var(--panel2); border-color:var(--muted); color:var(--muted); }
+
+  textarea{
+    width:100%; min-height:64px; background:var(--panel2); border:1px solid var(--line); border-radius:9px;
+    color:var(--text); padding:9px; font-family:var(--sans); font-size:13px; resize:vertical;
+  }
+  .applyBtn{ width:100%; justify-content:center; }
+
+  #fabPanel{
+    position:absolute; right:12px; bottom:12px; z-index:22;
+    background:var(--amber); color:#1a1a1a; border-radius:50%; width:52px; height:52px;
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:15px;
+    box-shadow:0 4px 14px rgba(0,0,0,.4); border:none; font-family:var(--mono);
+  }
+  #fabPanel.hide{ display:none; }
+
+  #toast{
+    position:absolute; left:50%; top:14px; transform:translateX(-50%);
+    background:var(--panel2); border:1px solid var(--amber); color:var(--text);
+    padding:8px 16px; border-radius:20px; font-size:12.5px; z-index:60; opacity:0;
+    transition:opacity .25s; pointer-events:none;
+  }
+  #toast.show{ opacity:1; }
+
+  #fatalBanner{
+    position:fixed; left:10px; right:10px; z-index:999;
+    top: calc(env(safe-area-inset-top) + 8px);
+    background:#3a1414; border:1px solid var(--red); color:#ffd9d6;
+    padding:12px 14px; border-radius:10px; font-size:12.5px; line-height:1.5;
+    display:none;
+  }
+  #fatalBanner.show{ display:block; }
+  #fatalBanner b{ color:#fff; }
+  #fatalBanner button{ margin-top:8px; min-height:34px; padding:6px 10px; font-size:12px; }
+</style>
+</head>
+<body>
+
+<div id="fatalBanner">
+  <div><b>No se pudo iniciar el visor 3D.</b></div>
+  <div id="fatalMsg" style="margin-top:4px;"></div>
+  <button onclick="location.reload()">Recargar página</button>
+</div>
+
+<div id="topbar">
+  <div class="brand">SITIO·IFC</div>
+  <div class="modelname" id="modelNameLabel">sin modelo</div>
+  <div class="spacer"></div>
+  <div id="viewToggle">
+    <button id="btnIso" class="active">3D</button>
+    <button id="btnPlan">Planta</button>
+  </div>
+  <button id="btnMode">🧭 Navegar</button>
+  <button id="btnOpen" class="primary">Abrir IFC</button>
+  <button id="btnExport" disabled>⇩ CSV</button>
+  <input type="file" id="fileInput" accept="*/*" />
+</div>
+
+<div id="main">
+  <div id="canvasWrap"></div>
+  <div id="selectBox"></div>
+
+  <div id="countBadge" style="display:none;">
+    <span id="countText">0 elementos</span>
+  </div>
+
+  <div id="storeySliderWrap">
+    <label>Altura corte</label>
+    <input type="range" id="storeySlider" min="0" max="100" value="100" />
+    <div id="storeyReadout">--</div>
+  </div>
+
+  <div id="hint">Toca un elemento para seleccionarlo. Usa "Seleccionar" y arrastra para marcar varios a la vez.</div>
+
+  <div id="errBanner">
+    <div class="hdr"><span>⚠️ Error técnico</span><button id="btnCopyErr">Copiar</button></div>
+    <div id="errBannerBody"></div>
+  </div>
+
+  <div id="emptyState">
+    <div class="big">Sin modelo cargado</div>
+    <div class="small">Toca "Abrir IFC" y elige el archivo exportado desde Revit. El procesamiento ocurre en tu dispositivo, sin subir el archivo a ningún servidor.</div>
+  </div>
+
+  <div id="loading" class="hidden">
+    <div class="spinner"></div>
+    <div id="loadingText">Cargando modelo…</div>
+    <div id="progressBar"><div id="progressFill"></div></div>
+  </div>
+
+  <button id="fabPanel" class="hide">0</button>
+</div>
+
+<div id="panel">
+  <div id="panelHandle">
+    <div class="title">Selección</div>
+    <div class="count" id="panelCount">0 elementos</div>
+  </div>
+  <div id="panelBody">
+    <div id="elemList"></div>
+
+    <div>
+      <div class="rowLabel">Estado en sitio</div>
+      <div class="statusRow">
+        <button class="si" id="btnSi">✓ Instalado</button>
+        <button class="no" id="btnNo">✕ No instalado</button>
+        <button class="sr" id="btnSinRevisar">— Sin revisar</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="rowLabel">Comentario</div>
+      <textarea id="comentario" placeholder="Observaciones de campo…"></textarea>
+      <div style="height:8px"></div>
+      <button class="applyBtn primary" id="btnAplicar">Guardar en selección</button>
+    </div>
+
+    <button id="btnCerrarSel" style="justify-content:center;">Cerrar y deseleccionar</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // Bootstrap que corre SIEMPRE, sin depender de módulos ES ni de CDNs.
+  // Garantiza que el botón "Abrir IFC" funcione y que cualquier error
+  // se muestre en pantalla (en vez de fallar en silencio, que es lo
+  // que suele pasar en Safari de iOS cuando algo no carga).
+  function showFatal(msg){
+    var b = document.getElementById('fatalBanner');
+    var m = document.getElementById('fatalMsg');
+    m.textContent = msg;
+    b.classList.add('show');
+    var ld = document.getElementById('loading');
+    if(ld) ld.classList.add('hidden');
+  }
+  window.addEventListener('error', function(e){
+    showFatal((e.message||'Error desconocido') + (e.filename? ' ('+e.filename.split('/').pop()+':'+e.lineno+')':''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var reason = e.reason;
+    showFatal('Promesa rechazada: ' + (reason && reason.message ? reason.message : String(reason)));
+  });
+  document.getElementById('btnOpen').addEventListener('click', function(){
+    document.getElementById('fileInput').click();
+  });
+</script>
+
+<script type="module">
+
+
+/* ---------------------------------------------------------------
+   SITIO·IFC — prototipo de revisión de instalación en campo
+   - Carga un IFC exportado de Revit directamente en el navegador
+     (WebAssembly vía web-ifc, no requiere servidor).
+   - Selección individual (toque) y múltiple (recuadro de arrastre).
+   - Marca de estado (Instalado / No instalado / Sin revisar) +
+     comentario, guardado en localStorage del dispositivo.
+   - Exporta CSV (GlobalId, Nombre, Tipo, Estado, Comentario) para
+     re-vincular al modelo de Revit (ej. vía Dynamo, por GUID).
+
+   Nota técnica: las librerías se cargan con import() dinámico desde
+   esm.sh en vez de <script type="importmap"> + unpkg, porque esm.sh
+   resuelve por sí solo las dependencias internas de cada paquete y
+   funciona incluso en versiones de Safari anteriores a la 16.4
+   (que no soportan import maps).
+   ------------------------------------------------------------- */
+
+const THREE_VER = '0.152.2';
+let THREE, OrbitControls, IFCLoader;
+
+async function loadLibs(){
+  THREE = await import(`https://esm.sh/three@${THREE_VER}`);
+  ({ OrbitControls } = await import(`https://esm.sh/three@${THREE_VER}/examples/jsm/controls/OrbitControls.js?deps=three@${THREE_VER}`));
+  ({ IFCLoader } = await import(`https://esm.sh/web-ifc-three@0.0.126/IFCLoader?deps=three@${THREE_VER}`));
+  // Estos dependen de THREE, por eso se crean aquí y no en el top-level del módulo
+  // (si no, se ejecutarían antes de que THREE termine de cargar y romperían todo).
+  clipPlane = new THREE.Plane(new THREE.Vector3(0,-1,0), 0);
+  highlightMat = new THREE.MeshBasicMaterial({ color: 0xf2a63a, transparent:true, opacity:0.55, depthTest:true });
+}
+
+const els = {
+  fileInput: document.getElementById('fileInput'),
+  btnOpen: document.getElementById('btnOpen'),
+  btnExport: document.getElementById('btnExport'),
+  btnMode: document.getElementById('btnMode'),
+  btnIso: document.getElementById('btnIso'),
+  btnPlan: document.getElementById('btnPlan'),
+  modelNameLabel: document.getElementById('modelNameLabel'),
+  loading: document.getElementById('loading'),
+  loadingText: document.getElementById('loadingText'),
+  progressFill: document.getElementById('progressFill'),
+  emptyState: document.getElementById('emptyState'),
+  canvasWrap: document.getElementById('canvasWrap'),
+  selectBox: document.getElementById('selectBox'),
+  panel: document.getElementById('panel'),
+  panelCount: document.getElementById('panelCount'),
+  elemList: document.getElementById('elemList'),
+  fabPanel: document.getElementById('fabPanel'),
+  btnSi: document.getElementById('btnSi'),
+  btnNo: document.getElementById('btnNo'),
+  btnSinRevisar: document.getElementById('btnSinRevisar'),
+  comentario: document.getElementById('comentario'),
+  btnAplicar: document.getElementById('btnAplicar'),
+  btnCerrarSel: document.getElementById('btnCerrarSel'),
+  countBadge: document.getElementById('countBadge'),
+  countText: document.getElementById('countText'),
+  storeySliderWrap: document.getElementById('storeySliderWrap'),
+  storeySlider: document.getElementById('storeySlider'),
+  storeyReadout: document.getElementById('storeyReadout'),
+  toast: document.getElementById('toast'),
+  errBanner: document.getElementById('errBanner'),
+  errBannerBody: document.getElementById('errBannerBody'),
+  btnCopyErr: document.getElementById('btnCopyErr'),
+};
+
+function showError(label, err){
+  const msg = (err && (err.stack || err.message)) || String(err);
+  const full = `${label}\n${msg}`;
+  els.errBannerBody.textContent = full;
+  els.errBanner.style.display = 'block';
+  console.error(label, err);
+}
+els.btnCopyErr.addEventListener('click', ()=>{
+  navigator.clipboard?.writeText(els.errBannerBody.textContent).then(()=>toast('Copiado')).catch(()=>{});
+});
+window.addEventListener('error', (e)=> showError('Error de script', e.error || e.message));
+window.addEventListener('unhandledrejection', (e)=> showError('Promesa no manejada', e.reason));
+
+let scene, renderer, camIso, camPlan, activeCam, controls, raycaster;
+let model = null, modelID = null, modelKey = null;
+let ifcLoader;
+let fieldData = new Map();   // expressID -> {installed: true|false|null, comment: ''}
+let propsCache = new Map();  // expressID -> {name, type, globalId, refValue}
+let selected = new Set();
+let mode = 'orbit'; // 'orbit' | 'box'
+let currentView = 'iso';
+let modelBBox = null;
+
+function toast(msg){
+  els.toast.textContent = msg;
+  els.toast.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> els.toast.classList.remove('show'), 1800);
+}
+
+/* ---------------- Three.js scene setup ---------------- */
+function initScene(){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x15181a);
+
+  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.localClippingEnabled = true;
+  els.canvasWrap.appendChild(renderer.domElement);
+
+  const light1 = new THREE.HemisphereLight(0xffffff, 0x2a2a2a, 1.1);
+  scene.add(light1);
+  const light2 = new THREE.DirectionalLight(0xffffff, 0.6);
+  light2.position.set(10, 20, 10);
+  scene.add(light2);
+
+  camIso = new THREE.PerspectiveCamera(55, 1, 0.1, 500000);
+  camIso.position.set(8000, 8000, 8000);
+
+  camPlan = new THREE.OrthographicCamera(-10000,10000,10000,-10000, 0.1, 500000);
+  camPlan.position.set(0, 50000, 0);
+  camPlan.up.set(0,0,-1);
+  camPlan.lookAt(0,0,0);
+
+  activeCam = camIso;
+  controls = new OrbitControls(camIso, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  raycaster = new THREE.Raycaster();
+
+  resize();
+  window.addEventListener('resize', resize);
+  animate();
+}
+
+function resize(){
+  const w = els.canvasWrap.clientWidth, h = els.canvasWrap.clientHeight;
+  renderer.setSize(w, h);
+  camIso.aspect = w/h; camIso.updateProjectionMatrix();
+  const aspect = w/h;
+  const halfH = (camPlan.top - camPlan.bottom)/2 * (camPlan._zoomBase || 1);
+  camPlan.left = -halfH*aspect; camPlan.right = halfH*aspect;
+  camPlan.updateProjectionMatrix();
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  if(mode==='orbit') controls.update();
+  renderer.render(scene, activeCam);
+}
+
+/* ---------------- IFC loading ---------------- */
+async function initLoader(){
+  els.btnOpen.disabled = true;
+  els.btnOpen.textContent = 'Cargando…';
+  try{
+    ifcLoader = new IFCLoader();
+    await ifcLoader.ifcManager.setWasmPath('https://unpkg.com/web-ifc@0.0.44/', true);
+    if(ifcLoader.ifcManager.setupThreeMeshBVH){
+      try{ ifcLoader.ifcManager.setupThreeMeshBVH?.(); }catch(e){ /* opcional, ignorar si falla */ }
+    }
+    els.btnOpen.disabled = false;
+    els.btnOpen.textContent = 'Abrir IFC';
+  }catch(err){
+    els.btnOpen.textContent = 'No disponible';
+    showError('No se pudo inicializar el lector IFC (revisa tu conexión a internet; este prototipo carga three.js y web-ifc desde CDN la primera vez)', err);
+    throw err;
+  }
+}
+
+async function openFile(file){
+  els.emptyState.style.display = 'none';
+  els.loading.classList.remove('hidden');
+  els.loadingText.textContent = 'Leyendo archivo…';
+  els.progressFill.style.width = '5%';
+
+  if(model){ scene.remove(model); model = null; }
+  selected.clear(); updatePanel();
+  propsCache.clear();
+
+  modelKey = file.name; // clave simple para localStorage (ver limitación en el chat)
+  els.modelNameLabel.textContent = file.name;
+  loadFieldData();
+
+  try{
+    const url = URL.createObjectURL(file);
+    ifcLoader.ifcManager.parser.onProgress = (evt) => {
+      const pct = evt && evt.total ? Math.round((evt.loaded/evt.total)*100) : null;
+      if(pct!=null){
+        els.progressFill.style.width = pct+'%';
+        els.loadingText.textContent = `Procesando geometría… ${pct}%`;
+      }
+    };
+    ifcLoader.load(url, (ifcModel)=>{
+      model = ifcModel;
+      modelID = ifcModel.modelID;
+      scene.add(model);
+      URL.revokeObjectURL(url);
+      onModelLoaded();
+    }, (evt)=>{
+      if(evt && evt.total){
+        const pct = Math.round((evt.loaded/evt.total)*100);
+        els.progressFill.style.width = pct+'%';
+        els.loadingText.textContent = `Cargando… ${pct}%`;
+      }
+    }, (err)=>{
+      console.error(err);
+      els.loading.classList.add('hidden');
+      els.emptyState.style.display = 'flex';
+      toast('Error al leer el IFC. Revisa la consola.');
+    });
+  }catch(err){
+    console.error(err);
+    els.loading.classList.add('hidden');
+    toast('No se pudo abrir el archivo.');
+  }
+}
+
+function onModelLoaded(){
+  els.loading.classList.add('hidden');
+  els.btnExport.disabled = false;
+  els.countBadge.style.display = 'block';
+
+  model.geometry.computeBoundingBox();
+  modelBBox = model.geometry.boundingBox.clone();
+  fitCameras();
+  setupStoreySlider();
+  refreshCount();
+  toast('Modelo cargado');
+}
+
+function fitCameras(){
+  const size = new THREE.Vector3(); modelBBox.getSize(size);
+  const center = new THREE.Vector3(); modelBBox.getCenter(center);
+  const radius = size.length()/2 || 5000;
+
+  camIso.position.copy(center).add(new THREE.Vector3(radius, radius, radius));
+  camIso.near = radius/100; camIso.far = radius*20; camIso.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+
+  camPlan.position.set(center.x, modelBBox.max.y + radius, center.z);
+  camPlan.lookAt(center.x, 0, center.z);
+  const aspect = els.canvasWrap.clientWidth/els.canvasWrap.clientHeight;
+  const half = radius*0.75;
+  camPlan.left=-half*aspect; camPlan.right=half*aspect; camPlan.top=half; camPlan.bottom=-half;
+  camPlan.near = 0.1; camPlan.far = radius*20;
+  camPlan.updateProjectionMatrix();
+}
+
+function setupStoreySlider(){
+  els.storeySliderWrap.classList.add('show');
+  els.storeySlider.min = Math.floor(modelBBox.min.y);
+  els.storeySlider.max = Math.ceil(modelBBox.max.y);
+  els.storeySlider.value = modelBBox.max.y;
+  updateClipPlane();
+}
+
+let clipPlane; // se crea en loadLibs(), una vez que THREE está disponible
+function updateClipPlane(){
+  const h = parseFloat(els.storeySlider.value);
+  clipPlane.constant = h;
+  els.storeyReadout.textContent = Math.round(h) + ' mm';
+  if(!model) return;
+  const mats = Array.isArray(model.material) ? model.material : [model.material];
+  mats.forEach(m=>{ m.clippingPlanes = (currentView==='plan') ? [clipPlane] : null; m.needsUpdate = true; });
+}
+els.storeySlider.addEventListener('input', updateClipPlane);
+
+/* ---------------- View toggle ---------------- */
+function setView(v){
+  currentView = v;
+  els.btnIso.classList.toggle('active', v==='iso');
+  els.btnPlan.classList.toggle('active', v==='plan');
+  activeCam = (v==='plan') ? camPlan : camIso;
+  controls.object = activeCam;
+  controls.enabled = (mode==='orbit');
+  els.storeySliderWrap.classList.toggle('show', v==='plan' && model);
+  updateClipPlane();
+}
+els.btnIso.addEventListener('click', ()=>setView('iso'));
+els.btnPlan.addEventListener('click', ()=>setView('plan'));
+
+/* ---------------- Mode toggle (navegar / seleccionar) ---------------- */
+function setMode(m){
+  mode = m;
+  els.btnMode.textContent = m==='orbit' ? '🧭 Navegar' : '🔲 Seleccionando';
+  els.btnMode.classList.toggle('active', m==='box');
+  controls.enabled = (m==='orbit');
+}
+els.btnMode.addEventListener('click', ()=> setMode(mode==='orbit' ? 'box' : 'orbit'));
+
+/* ---------------- Selection: tap ---------------- */
+let downPt = null, dragging = false;
+const dom = () => renderer.domElement;
+
+function getNDC(clientX, clientY){
+  const rect = dom().getBoundingClientRect();
+  return new THREE.Vector2(
+    ((clientX-rect.left)/rect.width)*2-1,
+    -((clientY-rect.top)/rect.height)*2+1
+  );
+}
+
+function pointerPos(e){
+  if(e.touches && e.touches.length) return {x:e.touches[0].clientX, y:e.touches[0].clientY};
+  return {x:e.clientX, y:e.clientY};
+}
+
+function onPointerDown(e){
+  if(!model) return;
+  const p = pointerPos(e);
+  downPt = p; dragging = false;
+  if(mode==='box'){
+    els.selectBox.style.display = 'block';
+    els.selectBox.style.left = p.x+'px'; els.selectBox.style.top = p.y+'px';
+    els.selectBox.style.width = '0px'; els.selectBox.style.height = '0px';
+  }
+}
+function onPointerMove(e){
+  if(!downPt || mode!=='box') return;
+  const p = pointerPos(e);
+  dragging = true;
+  const x = Math.min(p.x, downPt.x), y = Math.min(p.y, downPt.y);
+  const w = Math.abs(p.x-downPt.x), h = Math.abs(p.y-downPt.y);
+  els.selectBox.style.left=x+'px'; els.selectBox.style.top=y+'px';
+  els.selectBox.style.width=w+'px'; els.selectBox.style.height=h+'px';
+}
+function onPointerUp(e){
+  if(!downPt || !model){ downPt=null; return; }
+  const p = (e.changedTouches && e.changedTouches.length) ?
+    {x:e.changedTouches[0].clientX, y:e.changedTouches[0].clientY} : pointerPos(e);
+
+  if(mode==='box'){
+    els.selectBox.style.display = 'none';
+    if(dragging){
+      boxSelect(downPt, p, e.shiftKey || e._additive);
+    } else {
+      tapSelect(p, e.shiftKey);
+    }
+  } else {
+    if(!dragging) tapSelect(p, e.shiftKey);
+  }
+  downPt = null; dragging = false;
+}
+
+function attachEvents(){
+  const d = dom();
+  d.addEventListener('pointerdown', onPointerDown);
+  d.addEventListener('pointermove', onPointerMove);
+  d.addEventListener('pointerup', onPointerUp);
+  d.addEventListener('pointercancel', ()=>{ downPt=null; dragging=false; els.selectBox.style.display='none'; });
+}
+
+function tapSelect(p, additive){
+  const ndc = getNDC(p.x, p.y);
+  raycaster.setFromCamera(ndc, activeCam);
+  const hits = raycaster.intersectObject(model);
+  if(!hits.length) return;
+  const faceIndex = hits[0].faceIndex;
+  const expressID = ifcLoader.ifcManager.getExpressId(model.geometry, faceIndex);
+  if(expressID==null) return;
+  if(!additive) selected.clear();
+  if(selected.has(expressID)) selected.delete(expressID); else selected.add(expressID);
+  highlightSelection();
+  loadPropsFor([...selected]).then(updatePanel);
+}
+
+function boxSelect(a, b, additive){
+  const x0=Math.min(a.x,b.x), x1=Math.max(a.x,b.x);
+  const y0=Math.min(a.y,b.y), y1=Math.max(a.y,b.y);
+  if(!additive) selected.clear();
+
+  const cols = 22, rows = 22;
+  const found = new Set();
+  for(let i=0;i<=cols;i++){
+    for(let j=0;j<=rows;j++){
+      const px = x0 + (x1-x0)*(i/cols);
+      const py = y0 + (y1-y0)*(j/rows);
+      const ndc = getNDC(px, py);
+      raycaster.setFromCamera(ndc, activeCam);
+      const hits = raycaster.intersectObject(model);
+      if(hits.length){
+        const id = ifcLoader.ifcManager.getExpressId(model.geometry, hits[0].faceIndex);
+        if(id!=null) found.add(id);
+      }
+    }
+  }
+  found.forEach(id=>selected.add(id));
+  highlightSelection();
+  loadPropsFor([...selected]).then(updatePanel);
+  if(found.size===0) toast('Ningún elemento dentro del recuadro');
+}
+
+let highlightMat; // se crea en loadLibs(), una vez que THREE está disponible
+function highlightSelection(){
+  if(!model) return;
+  ifcLoader.ifcManager.removeSubset(modelID, highlightMat, 'sel');
+  if(selected.size){
+    ifcLoader.ifcManager.createSubset({
+      modelID, ids:[...selected], material: highlightMat, scene, removePrevious:true, customID:'sel'
+    });
+  }
+  refreshCount();
+}
+
+/* ---------------- Properties & reference value ---------------- */
+async function loadPropsFor(ids){
+  for(const id of ids){
+    if(propsCache.has(id)) continue;
+    try{
+      const props = await ifcLoader.ifcManager.getItemProperties(modelID, id);
+      const type = ifcLoader.ifcManager.getIfcType ? ifcLoader.ifcManager.getIfcType(modelID, id) : '';
+      let refValue = null;
+      try{
+        const psets = await ifcLoader.ifcManager.getPropertySets(modelID, id, true);
+        outer:
+        for(const ps of psets){
+          const props2 = ps.HasProperties || [];
+          for(const pr of props2){
+            const name = pr.Name && pr.Name.value;
+            if(name && name.toUpperCase().includes('CP-EN SITIO')){
+              refValue = pr.NominalValue ? pr.NominalValue.value : null;
+              break outer;
+            }
+          }
+        }
+      }catch(e){ /* pset opcional */ }
+      propsCache.set(id, {
+        name: (props && props.Name && props.Name.value) || '(sin nombre)',
+        globalId: (props && props.GlobalId && props.GlobalId.value) || '',
+        type: type || '',
+        refValue
+      });
+    }catch(e){
+      propsCache.set(id, { name:'(no disponible)', globalId:'', type:'', refValue:null });
+    }
+  }
+}
+
+/* ---------------- Field data persistence (localStorage) ---------------- */
+function storageKey(){ return 'sitio-ifc::' + (modelKey || 'default'); }
+function loadFieldData(){
+  fieldData = new Map();
+  try{
+    const raw = localStorage.getItem(storageKey());
+    if(raw){
+      const obj = JSON.parse(raw);
+      Object.entries(obj).forEach(([k,v])=> fieldData.set(Number(k), v));
+    }
+  }catch(e){ console.warn('No se pudo leer localStorage', e); }
+}
+function persistFieldData(){
+  const obj = {};
+  fieldData.forEach((v,k)=> obj[k]=v);
+  try{ localStorage.setItem(storageKey(), JSON.stringify(obj)); }catch(e){ console.warn(e); }
+}
+
+/* ---------------- Panel UI ---------------- */
+function refreshCount(){
+  els.countText.textContent = selected.size + ' seleccionado(s)';
+  els.countBadge.style.display = model ? 'block' : 'none';
+  els.fabPanel.textContent = selected.size;
+  els.fabPanel.classList.toggle('hide', selected.size===0);
+}
+function statusLabel(v){
+  if(v===true) return 'Sí';
+  if(v===false) return 'No';
+  return 'Sin revisar';
+}
+function updatePanel(){
+  refreshCount();
+  els.panelCount.textContent = selected.size + ' elemento(s)';
+  els.elemList.innerHTML = '';
+  if(selected.size===0){ els.panel.classList.remove('open'); return; }
+
+  const ids = [...selected];
+  ids.slice(0,25).forEach(id=>{
+    const p = propsCache.get(id) || {};
+    const fd = fieldData.get(id) || {installed:null, comment:''};
+    const card = document.createElement('div');
+    card.className = 'elemCard';
+    card.innerHTML = `
+      <div class="name">${escapeHtml(p.name || '—')}</div>
+      <div class="meta">${escapeHtml(p.type||'')} · ${escapeHtml((p.globalId||'').slice(0,10))}</div>
+      <div class="ref">Valor en modelo (1.CP-EN SITIO): <b>${p.refValue===true?'Sí':p.refValue===false?'No':'—'}</b> &nbsp;·&nbsp; Estado en sitio: <b>${statusLabel(fd.installed)}</b></div>
+    `;
+    els.elemList.appendChild(card);
+  });
+  if(ids.length>25){
+    const more = document.createElement('div');
+    more.className = 'meta'; more.style.padding='4px 2px'; more.style.color='var(--muted)';
+    more.textContent = `+ ${ids.length-25} elemento(s) más en la selección`;
+    els.elemList.appendChild(more);
+  }
+
+  // Si toda la selección comparte el mismo comentario/estado, precargarlo
+  const first = fieldData.get(ids[0]) || {installed:null, comment:''};
+  const allSame = ids.every(id=>{
+    const fd = fieldData.get(id) || {installed:null, comment:''};
+    return fd.installed===first.installed;
+  });
+  setStatusButtons(allSame ? first.installed : undefined);
+  els.comentario.value = ids.length===1 ? (first.comment||'') : '';
+
+  els.panel.classList.add('open');
+}
+function setStatusButtons(v){
+  els.btnSi.classList.toggle('active', v===true);
+  els.btnNo.classList.toggle('active', v===false);
+  els.btnSinRevisar.classList.toggle('active', v===null || v===undefined);
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+els.btnSi.addEventListener('click', ()=>setStatusButtons(true));
+els.btnNo.addEventListener('click', ()=>setStatusButtons(false));
+els.btnSinRevisar.addEventListener('click', ()=>setStatusButtons(null));
+
+els.btnAplicar.addEventListener('click', ()=>{
+  if(selected.size===0) return;
+  let installed = null;
+  if(els.btnSi.classList.contains('active')) installed = true;
+  else if(els.btnNo.classList.contains('active')) installed = false;
+  const comment = els.comentario.value;
+  selected.forEach(id=>{
+    const prev = fieldData.get(id) || {};
+    fieldData.set(id, { installed, comment: (selected.size===1 ? comment : (comment || prev.comment || '')) });
+  });
+  persistFieldData();
+  toast('Guardado en ' + selected.size + ' elemento(s)');
+  updatePanel();
+});
+
+els.btnCerrarSel.addEventListener('click', ()=>{
+  selected.clear();
+  highlightSelection();
+  updatePanel();
+});
+els.fabPanel.addEventListener('click', ()=> els.panel.classList.toggle('open'));
+
+/* ---------------- CSV export ---------------- */
+async function exportCSV(){
+  if(!model) return;
+  toast('Generando CSV…');
+  const rows = [['GlobalId','Nombre','Tipo','Estado_Sitio','Comentario']];
+  const ids = [...fieldData.keys()];
+  await loadPropsFor(ids);
+  ids.forEach(id=>{
+    const p = propsCache.get(id) || {};
+    const fd = fieldData.get(id) || {};
+    rows.push([
+      p.globalId || '',
+      p.name || '',
+      p.type || '',
+      fd.installed===true ? 'Si' : fd.installed===false ? 'No' : '',
+      (fd.comment||'').replace(/\n/g,' ')
+    ]);
+  });
+  const csv = rows.map(r=> r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const base = (modelKey||'modelo').replace(/\.ifc$/i,'');
+  a.href = url; a.download = `seguimiento_${base}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+function csvCell(v){
+  const s = String(v??'');
+  return /[",\r\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+els.btnExport.addEventListener('click', exportCSV);
+
+/* ---------------- File open ---------------- */
+els.fileInput.addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(file) openFile(file);
+  e.target.value = '';
+});
+
+/* ---------------- Init ---------------- */
+(async function main(){
+  try{
+    els.loading.classList.remove('hidden');
+    els.loadingText.textContent = 'Cargando librerías 3D…';
+    await loadLibs();
+    els.loading.classList.add('hidden');
+    initScene();
+    attachEvents();
+    await initLoader();
+  }catch(err){
+    showFatal('No se pudieron cargar las librerías 3D (three.js / web-ifc). Verifica tu conexión a internet y recarga la página.\n\nDetalle: ' + (err && (err.message || err)));
+  }
+})();
+
+</script>
+</body>
+</html>
