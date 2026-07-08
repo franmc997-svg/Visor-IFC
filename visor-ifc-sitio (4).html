@@ -281,6 +281,17 @@
   });
 </script>
 
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+    "three/examples/jsm/": "https://unpkg.com/three@0.152.2/examples/jsm/",
+    "web-ifc": "https://unpkg.com/web-ifc@0.0.44/web-ifc-api.js",
+    "web-ifc-three/IFCLoader": "https://unpkg.com/web-ifc-three@0.0.126/IFCLoader.js"
+  }
+}
+</script>
+
 <script type="module">
 
 
@@ -294,20 +305,24 @@
    - Exporta CSV (GlobalId, Nombre, Tipo, Estado, Comentario) para
      re-vincular al modelo de Revit (ej. vía Dynamo, por GUID).
 
-   Nota técnica: las librerías se cargan con import() dinámico desde
-   esm.sh en vez de <script type="importmap"> + unpkg, porque esm.sh
-   resuelve por sí solo las dependencias internas de cada paquete y
-   funciona incluso en versiones de Safari anteriores a la 16.4
-   (que no soportan import maps).
+   Nota técnica: las librerías se cargan con <script type="importmap">
+   + unpkg (en vez de import() dinámico desde esm.sh). esm.sh re-empaqueta
+   los paquetes con esbuild, y esa re-empaquetación deja código de
+   detección de entorno (Node vs navegador) en web-ifc que termina
+   intentando un `require('fs')` en el navegador, produciendo el error
+   "Dynamic require of 'fs' is not supported". Sirviendo los paquetes
+   tal cual desde unpkg (sin re-empaquetar) y resolviendo sus imports
+   internos ("three", "web-ifc") con el importmap, se evita ese problema.
+   Import maps requieren Safari 16.4+ (marzo 2023), así que son seguros
+   para iPhone/iPad actualizados.
    ------------------------------------------------------------- */
 
-const THREE_VER = '0.152.2';
 let THREE, OrbitControls, IFCLoader;
 
 async function loadLibs(){
-  THREE = await import(`https://esm.sh/three@${THREE_VER}`);
-  ({ OrbitControls } = await import(`https://esm.sh/three@${THREE_VER}/examples/jsm/controls/OrbitControls.js?deps=three@${THREE_VER}`));
-  ({ IFCLoader } = await import(`https://esm.sh/web-ifc-three@0.0.126/IFCLoader?deps=three@${THREE_VER}`));
+  THREE = await import('three');
+  ({ OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js'));
+  ({ IFCLoader } = await import('web-ifc-three/IFCLoader'));
   // Estos dependen de THREE, por eso se crean aquí y no en el top-level del módulo
   // (si no, se ejecutarían antes de que THREE termine de cargar y romperían todo).
   clipPlane = new THREE.Plane(new THREE.Vector3(0,-1,0), 0);
